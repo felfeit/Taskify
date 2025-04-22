@@ -6,20 +6,26 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy.Companion.REPLACE
 import androidx.room.Query
 import androidx.room.Update
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+// Data Access Object (DAO) for Database Operations & Queries
 @Dao
 interface TaskDao {
 
-    @Insert(onConflict = REPLACE)
-    suspend fun addTask(tasks: Task)
+    // Update existing task or Insert new task
+    @Upsert
+    suspend fun saveTask(tasks: Task)
 
-    @Query("SELECT * FROM tasks ORDER BY CASE priority WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END")
+    // Get all tasks ordered by priority
+    @Query("SELECT * FROM tasks ORDER BY CASE priority WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END")
     fun getAllTasks(): Flow<List<Task>>
 
-    @Update(onConflict = REPLACE)
-    suspend fun updateTask(task: Task)
-
+    // Delete a task
     @Delete
     suspend fun deleteTask(task: Task)
+
+    // Search tasks
+    @Query("SELECT * FROM tasks WHERE title LIKE '%' || :query || '%'")
+    fun searchTasks(query: String): Flow<List<Task>>
 }

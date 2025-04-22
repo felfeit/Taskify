@@ -2,8 +2,11 @@ package com.felfeit.taskify.ui
 
 import android.content.Context
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -34,8 +37,6 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
     private val viewModel: TaskViewModel by viewModels()
     private lateinit var adapter: TaskAdapter
     private var currentDialog: AlertDialog? = null
-    private var tasksObserver: Observer<List<Task>>? = null
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,19 +45,10 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         setupRecyclerView()
         setupViewModel()
         setupFAB()
+        setupSearchField()
     }
 
-    override fun onDestroy() {
-        tasksObserver?.let { viewModel.allTasks.removeObserver(it) }
-        currentDialog?.dismiss()
-        super.onDestroy()
-    }
-
-    private fun showSnackbar(message: String, duration: Int = Snackbar.LENGTH_SHORT) {
-        Snackbar.make(binding.root, message, duration).show()
-    }
-
-    // [1] Edge-to-edge Optimization
+    // Edge-to-edge Optimization
     private fun setupEdgeToEdge() {
         enableEdgeToEdge()
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
@@ -66,14 +58,14 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         }
     }
 
-    // [2] Adapter Setup (Optimized)
+    // Setup Task Adapter
     private fun setupAdapter() {
         adapter = TaskAdapter(
             onTaskClick = { task ->
-                showEditTaskDialog(task)
+                showTaskDialog(task)
             },
             onTaskChecked = { task, isChecked ->
-                viewModel.updateTask(task.copy(isCompleted = isChecked))
+                viewModel.saveTask(task.copy(isCompleted = isChecked))
             },
             onDeleteClick = { task ->
                 showDeleteConfirmationDialog(task)
@@ -81,7 +73,7 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         )
     }
 
-    // [3] RecyclerView Setup with Animation
+    // Setup Recycler View
     private fun setupRecyclerView() {
         binding.rvTasks.apply {
             adapter = this@MainActivity.adapter
@@ -93,16 +85,15 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         }
     }
 
-    // [4] ViewModel Observation
+    // ViewModel Observer
     private fun setupViewModel() {
-        tasksObserver = Observer { tasks ->
+        viewModel.allTasks.observe(this) { tasks ->
             adapter.submitList(tasks) {
                 val newItemIndex = tasks.indexOfFirst { it.id == 0 }
-                if (newItemIndex != -1) binding.rvTasks.scrollToPosition(newItemIndex)
+                if (newItemIndex != -1) binding.rvTasks.smoothScrollToPosition(newItemIndex)
             }
             binding.emptyState.visibility = if (tasks.isEmpty()) View.VISIBLE else View.GONE
         }
-        viewModel.allTasks.observe(this, tasksObserver!!)
 
         lifecycleScope.launch {
             viewModel.operationStatus.collect { status ->
@@ -117,84 +108,97 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
         }
     }
 
-    // [5] FAB Implementation with Animation
-    private fun setupFAB() {
-        binding.fabAddTask.apply {
-            setOnClickListener {
-                showAddTaskDialog()
+    // Setup Search
+    private fun setupSearchField() {
+        binding.searchField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                viewModel.setSearchQuery(s.toString())
+            }
+
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        // Handle search button di keyboard
+        binding.searchField.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                hideKeyboard()
+                true
+            } else {
+                false
+            }
+        }
+
+        // Observe hasil pencarian
+        lifecycleScope.launch {
+            viewModel.searchResults.collect { tasks ->
+                adapter.submitList(tasks)
             }
         }
     }
 
-    // [6] Add Task Dialog (Material)
-    private fun showAddTaskDialog() {
-        val dialogBinding = DialogAddTaskBinding.inflate(layoutInflater)
 
-        val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle("Tambah Task Baru")
+    // Floating Action Button
+    private fun setupFAB() {
+        binding.fabAddTask.apply {
+            setOnClickListener {
+                showTaskDialog()
+            }
+        }
+    }
+
+    // Alert Dialog for Saving Task
+    private fun showTaskDialog(task: Task? = null) {
+        currentDialog?.dismiss()
+
+        val dialogBinding = DialogAddTaskBinding.inflate(layoutInflater).apply {
+            task?.let {
+                etTitle.setText(it.title)
+                when (it.priority) {
+                    "High" -> rbHigh.isChecked = true
+                    "Medium" -> rbMedium.isChecked = true
+                    else -> rbLow.isChecked = true
+                }
+            }
+        }
+
+        currentDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(if (task == null) "Tambah Task" else "Edit Task")
             .setView(dialogBinding.root)
             .setPositiveButton("Simpan") { dialog, _ ->
                 val title = dialogBinding.etTitle.text.toString()
                 val priority = when (dialogBinding.priorityGroup.checkedRadioButtonId) {
-                    R.id.rb_high -> "HIGH"
-                    R.id.rb_medium -> "MEDIUM"
-                    else -> "LOW"
+                    R.id.rb_high -> "High"
+                    R.id.rb_medium -> "Medium"
+                    else -> "Low"
                 }
 
                 if (title.isNotBlank()) {
-                    viewModel.addTask(title, priority)
+                    // Use saveTask for update or insert
+                    val taskToSave = task?.copy(
+                        title = title,
+                        priority = priority
+                    ) ?: Task(
+                        title = title,
+                        priority = priority
+                    )
+                    viewModel.saveTask(taskToSave)
                 }
             }
             .setNegativeButton("Batal", null)
             .create()
             .apply {
-                window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+                setOnDismissListener {
+                    hideKeyboard()
+                    currentDialog = null
+                }
                 show()
-
-                // Auto-focus keyboard
                 dialogBinding.etTitle.requestFocus()
             }
-
-        dialog.setOnDismissListener {
-            hideKeyboard()
-        }
-        dialog.show()
     }
 
-    private fun hideKeyboard() {
-        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(binding.root.windowToken, 0)
-    }
-
-    // [7] Edit Task Dialog
-    private fun showEditTaskDialog(task: Task) {
-        val dialogBinding = DialogAddTaskBinding.inflate(layoutInflater).apply {
-            etTitle.setText(task.title)
-            when (task.priority) {
-                "HIGH" -> rbHigh.isChecked = true
-                "MEDIUM" -> rbMedium.isChecked = true
-                else -> rbLow.isChecked = true
-            }
-        }
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle("Edit Task")
-            .setView(dialogBinding.root)
-            .setPositiveButton("Simpan") { _, _ ->
-                val newTitle = dialogBinding.etTitle.text.toString()
-                val newPriority = when (dialogBinding.priorityGroup.checkedRadioButtonId) {
-                    R.id.rb_high -> "HIGH"
-                    R.id.rb_medium -> "MEDIUM"
-                    else -> "LOW"
-                }
-
-                viewModel.updateTask(task.copy(title = newTitle, priority = newPriority))
-            }
-            .setNegativeButton("Batal", null)
-            .show()
-    }
-
-    // [8] Delete Confirmation
+    // Alert Dialog Confirmation for Deleting Task
     private fun showDeleteConfirmationDialog(task: Task) {
         MaterialAlertDialogBuilder(this)
             .setTitle("Hapus Task?")
@@ -204,6 +208,24 @@ class MainActivity : AppCompatActivity(R.layout.activity_main) {
             }
             .setNegativeButton("Batal", null)
             .show()
+    }
+
+    // Snackbar
+    private fun showSnackbar(message: String, duration: Int = Snackbar.LENGTH_SHORT) {
+        Snackbar.make(binding.root, message, duration)
+            .setAction("Dismiss") { }
+            .show()
+    }
+
+    // Extension
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(binding.root.windowToken, 0)
+    }
+
+    override fun onDestroy() {
+        currentDialog?.dismiss()
+        super.onDestroy()
     }
 
     companion object {

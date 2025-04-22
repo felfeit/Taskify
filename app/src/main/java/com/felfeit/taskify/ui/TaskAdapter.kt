@@ -25,8 +25,8 @@ class TaskAdapter(
                 cbCompleted.isChecked = task.isCompleted
                 priorityCircle.setImageResource(
                     when (task.priority) {
-                        "HIGH" -> R.drawable.high_priority_circle
-                        "MEDIUM" -> R.drawable.medium_priority_circle
+                        "High" -> R.drawable.high_priority_circle
+                        "Medium" -> R.drawable.medium_priority_circle
                         else -> R.drawable.low_priority_circle
                     }
                 )
@@ -44,7 +44,10 @@ class TaskAdapter(
                         onTaskChecked(currentTask, isChecked)
                     }
                 }
-                btnDelete.setOnClickListener { onDeleteClick(task) }
+                root.setOnLongClickListener {
+                    onDeleteClick(task)
+                    return@setOnLongClickListener true
+                }
             }
         }
     }
